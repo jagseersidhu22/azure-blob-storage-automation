@@ -1,0 +1,156 @@
+
+trigger:
+  branches:
+    include:
+      - main
+pool:
+  name: Jagseer-pc
+  
+stages:
+  - stage: Terraform_init_scans
+    displayName: Terraform installInit
+    jobs:
+      - job: Terraforminit
+        displayName: Terraform init
+        steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+            backendServiceArm: 'sp-stg'
+            backendAzureRmOverrideSubscriptionID: '68091150-801e-4498-8be2-e5d4bcf9919c'
+            backendAzureRmResourceGroupName: 'imigrant-help'
+            backendAzureRmStorageAccountName: 'jagseerstg123'
+            backendAzureRmContainerName: 'containertf'
+            backendAzureRmKey: 'devstg.terraform.tfstate'
+
+        
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'custom'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+            outputTo: 'console'
+            customCommand: 'fmt'
+            environmentServiceNameAzureRM: 'sp-stg'
+            environmentAzureRmOverrideSubscriptionID: '68091150-801e-4498-8be2-e5d4bcf9919c'
+
+      - job: tfsec
+        displayName: tfsec scan
+        dependsOn: Terraforminit
+        steps:
+        - task: tfsec@1
+          continueOnError: true
+          inputs:
+            version: 'v1.26.0'
+            dir: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+
+      - job: tflint
+        displayName: tflint
+        dependsOn: tfsec
+        steps:
+        - task: PowerShell@2
+          continueOnError: true
+          inputs:
+            targetType: 'inline'
+            script: |
+              winget install TerraformLinters.tflint
+              ls
+              tflint
+            errorActionPreference: 'continue'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+
+  - stage: TerraformPlan
+    displayName: Terraform plan & Review
+    jobs:
+      - job: Terraform_plan
+        displayName: Terraform plan And Review
+        steps:
+        - task: TerraformInstaller@1
+          inputs:
+            terraformVersion: 'latest'
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+            backendServiceArm: 'sp-stg'
+            backendAzureRmOverrideSubscriptionID: '68091150-801e-4498-8be2-e5d4bcf9919c'
+            backendAzureRmResourceGroupName: 'imigrant-help'
+            backendAzureRmStorageAccountName: 'jagseerstg123'
+            backendAzureRmContainerName: 'containertf'
+            backendAzureRmKey: 'devstg.terraform.tfstate'
+        - task: TerraformTask@5
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            workingDirectory: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+            environmentServiceNameAzureRM: 'sp-stg'
+            environmentAzureRmOverrideSubscriptionID: '68091150-801e-4498-8be2-e5d4bcf9919c'
+  - stage: Apply
+    displayName: Terraform Apply Stage
+    dependsOn: TerraformPlan
+    jobs:
+    - deployment: TerraformApplyJob
+      displayName: Terraform Apply
+      environment: 'Dev'   # this environment has manual approval check in UI
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - task: TerraformInstaller@1
+              inputs:
+                terraformVersion: 'latest'
+            - task: TerraformTask@5
+              inputs:
+                provider: 'azurerm'
+                command: 'init'
+                workingDirectory: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+                backendServiceArm: 'sp-stg'
+                backendAzureRmOverrideSubscriptionID: '68091150-801e-4498-8be2-e5d4bcf9919c'
+                backendAzureRmResourceGroupName: 'imigrant-help'
+                backendAzureRmStorageAccountName: 'jagseerstg123'
+                backendAzureRmContainerName: 'containertf'
+                backendAzureRmKey: 'devstg.terraform.tfstate'
+            - task: TerraformTask@5
+              inputs:
+                provider: 'azurerm'
+                command: 'apply'
+                workingDirectory: '$(System.DefaultWorkingDirectory)/Environment/Dev'
+                environmentServiceNameAzureRM: 'sp-stg'
+  - stage: File_Upload
+    displayName: File Upload Stage
+    dependsOn: Apply
+    jobs:
+      - job: File_Download_by_url
+        displayName: File Upload from url provided
+        steps:
+        - task: PowerShell@2
+          inputs:
+            targetType: 'inline'
+            script: |
+             Invoke-WebRequest `
+             -Uri "https://file-examples.com/wp-content/storage/2017/10/file-sample_150kB.pdf" `
+             -OutFile "$(Build.SourcesDirectory)\sample.pdf"
+
+      - job: Upload_to_blob_Job
+        dependsOn: File_Download_by_url
+        displayName: Upload to Azure Blob Job
+        steps:
+        - task: AzureCLI@3
+          inputs:
+            connectionType: 'azureRM'
+            azureSubscription: 'sp-stg'
+            scriptType: 'ps'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              az storage blob upload `
+                --account-name stgdevstorage `
+                --container-name stgdevcontainer `
+                --name sample.pdf `
+                --file sample.pdf `
+                --auth-mode login
