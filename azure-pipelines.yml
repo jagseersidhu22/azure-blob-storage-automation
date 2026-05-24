@@ -11,12 +11,15 @@ stages:
   - stage: Terraform_init_scans
     displayName: Terraform installInit
     jobs:
-      - job: Terraforminit
-        displayName: Terraform init
+      - job: Terraforminstall
+        displayName: Terraform install
         steps:
         - task: TerraformInstaller@1
           inputs:
             terraformVersion: 'latest'
+      - job: Terraforminit
+        displayName: Terraform init
+        steps:            
         - task: TerraformTask@5
           inputs:
             provider: 'azurerm'
