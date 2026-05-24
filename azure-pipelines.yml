@@ -3,7 +3,7 @@ trigger:
     include:
       - main
 pool:
-  name: Jagseer-pc
+  name: hp-pc
 variables: 
   fileurl : "https://file-examples.com/wp-content/storage/2017/10/file-sample_150kB.pdf"
   
